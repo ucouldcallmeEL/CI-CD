@@ -9,8 +9,8 @@ resource "aws_security_group" "alb" {
 
   ingress {
     description = "HTTP from internet"
-    from_port   = 80
-    to_port     = 80
+    from_port   = 30008
+    to_port     = 30008
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -37,11 +37,12 @@ resource "aws_security_group" "master" {
   vpc_id      = var.vpc_id
 
   ingress {
-    description = "SSH from admin only"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.admin_cidr]
+    description     = "SSH from admin only or Bastion"
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    cidr_blocks     = [var.admin_cidr]
+    security_groups = [aws_security_group.bastion.id]
   }
 
   # Kubernetes API server - reachable from within the VPC (workers, ansible
@@ -90,13 +91,39 @@ resource "aws_security_group" "master" {
     cidr_blocks = [var.vpc_cidr]
   }
 
-  # CNI overlay (Flannel VXLAN default used by most kubeadm quick-starts).
-  # Swap/extend this if the Ansible playbook installs Calico instead.
+  # Calico BGP peering between all cluster nodes
   ingress {
-    description = "CNI overlay (flannel VXLAN)"
+    description = "Calico BGP"
+    from_port   = 179
+    to_port     = 179
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  # Calico VXLAN overlay (primary CNI used by the Ansible playbook)
+  ingress {
+    description = "Calico VXLAN overlay"
+    from_port   = 4789
+    to_port     = 4789
+    protocol    = "udp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  # Flannel VXLAN (kept for compatibility if CNI is switched)
+  ingress {
+    description = "Flannel VXLAN overlay"
     from_port   = 8472
     to_port     = 8472
     protocol    = "udp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  # Allow all internal cluster traffic (essential for Calico IPIP protocol 4, Webhooks, CNI, etc.)
+  ingress {
+    description = "All intra-cluster traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
     cidr_blocks = [var.vpc_cidr]
   }
 
@@ -123,11 +150,12 @@ resource "aws_security_group" "worker" {
   vpc_id      = var.vpc_id
 
   ingress {
-    description = "SSH from admin only"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.admin_cidr]
+    description     = "SSH from admin only or Bastion"
+    from_port       = 22
+    to_port         = 22
+    protocol        = "tcp"
+    cidr_blocks     = [var.admin_cidr]
+    security_groups = [aws_security_group.bastion.id]
   }
 
   ingress {
@@ -138,8 +166,27 @@ resource "aws_security_group" "worker" {
     cidr_blocks = [var.vpc_cidr]
   }
 
+  # Calico BGP peering between all cluster nodes
   ingress {
-    description = "CNI overlay (flannel VXLAN)"
+    description = "Calico BGP"
+    from_port   = 179
+    to_port     = 179
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  # Calico VXLAN overlay
+  ingress {
+    description = "Calico VXLAN overlay"
+    from_port   = 4789
+    to_port     = 4789
+    protocol    = "udp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  # Flannel VXLAN (kept for compatibility if CNI is switched)
+  ingress {
+    description = "Flannel VXLAN overlay"
     from_port   = 8472
     to_port     = 8472
     protocol    = "udp"
@@ -155,6 +202,24 @@ resource "aws_security_group" "worker" {
     security_groups = [aws_security_group.alb.id]
   }
 
+  # NodePort access from within the cluster (pod-to-node traffic)
+  ingress {
+    description = "NodePort range intra-cluster"
+    from_port   = var.node_port_range_start
+    to_port     = var.node_port_range_end
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  # Allow all internal cluster traffic (essential for Calico IPIP protocol 4, Webhooks, CNI, etc.)
+  ingress {
+    description = "All intra-cluster traffic"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
   egress {
     description = "All outbound"
     from_port   = 0
@@ -166,5 +231,35 @@ resource "aws_security_group" "worker" {
   tags = {
     Name = "${var.project_name}-k8s-worker-sg"
     Role = "worker"
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Bastion Host security group
+# ---------------------------------------------------------------------------
+resource "aws_security_group" "bastion" {
+  name        = "${var.project_name}-bastion-sg"
+  description = "Bastion host for SSH proxying"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    description = "SSH from admin only"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = [var.admin_cidr]
+  }
+
+  egress {
+    description = "All outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "${var.project_name}-bastion-sg"
+    Role = "bastion"
   }
 }

@@ -23,5 +23,5 @@ variable "worker_instance_ids" {
 variable "node_ports" {
   type        = list(number)
   description = "NodePort(s) (>30000) that the deployed Service(s) are exposed on. One target group + listener is created per port."
-  default     = [30080]
+  default     = [30008]
 }

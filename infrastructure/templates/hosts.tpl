@@ -1,15 +1,21 @@
-[master]
-${master_ip} ansible_host=${master_ip} ansible_user=ubuntu instance_id=${master_id}
+[bastion]
+bastion01 ansible_host=${bastion_public_ip}
 
-[workers]
+[master]
+master01 ansible_host=${master_ip}
+
+[worker]
 %{ for idx, ip in worker_ips ~}
-${ip} ansible_host=${ip} ansible_user=ubuntu instance_id=${worker_ids[idx]}
+worker0${idx + 1} ansible_host=${ip}
 %{ endfor ~}
 
-[kubernetes:children]
+[k8s_cluster:children]
 master
-workers
+worker
+
+[k8s_cluster:vars]
+ansible_user=ec2-user
+ansible_ssh_private_key_file=./ansiblekey.pem
 
 [all:vars]
-ansible_ssh_private_key_file=~/.ssh/${key_name}.pem
-ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyCommand="ssh -i ./ansiblekey.pem -W %h:%p ec2-user@${bastion_public_ip}"'
